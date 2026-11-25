@@ -1,0 +1,11 @@
+# secrets — KHÔNG commit
+ck*.txt
+cookie*.txt
+*token*.json
+state/
+__pycache__/
+*.pyc
+embryo-engine/log/
+embryo-engine/*.core
+*.core
+nohup.out
