@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         gamevh Caro Auto-Bot (20xu+)
 // @namespace    gamevh.caro.bot
-// @version      1.2.2
+// @version      1.3.0
 // @description  Auto tạo bàn caro + tự chơi (heuristic AI) trên gamevh.net — hook WS, dùng session thật
 // @author       you
 // @match        https://gamevh.net/*
@@ -18,7 +18,7 @@
     betIdDefault: 0,          // 0=20xu, 1=40, 2=100, 3=200, 4=400, 5=1000, 6=2000
     moveDelayMin: 1200,       // ms trễ nước đi
     moveDelayMax: 2800,
-    firstTurnWait: 4000,      // ms chờ nước đầu của đối thủ trước khi tự đi (X)
+    retryDelay: 1200,         // ms thử lại sau nước bị từ chối
     rematchDelay: 2500,       // ms — SET_READY mời ván mới sau GAMEOVER
     rematchTimeout: 30000,    // ms — không start lại → rời bàn, tạo bàn mới
     createRetry: 10000,
@@ -35,6 +35,7 @@
   };
 
   const EMPTY = -1, CIRCLE = 0, CROSS = 1;
+  const symName = (s) => s === CIRCLE ? 'O' : s === CROSS ? 'X' : '?';
 
   // ======================= TRẠNG THÁI =======================
   const S = {
@@ -48,16 +49,18 @@
     readySent: false,
     w: 15, h: 19,
     grid: [], history: [],
-    mySymbol: null,          // xác định qua nước đầu ván
-    probeDone: false,
-    myAcceptedSym: null,     // symbol của nước tôi được server CHẤP NHẬN
+    mySymbol: null,          // học từ echo MOVE của nước tôi được chấp nhận
+    mySid: null,             // học từ SET_TURN lúc gửi nước được chấp nhận
+    turnSid: null,           // sid của lượt hiện tại
+    probeSid: null,          // sid lúc gửi nước chờ echo
     blockUntilMove: false,
     balance: 0, balanceAtGo: null,
     wld: [0, 0, 0], wagered: 0,
-    firstTurnTimer: null,
     turnTimer: null, rematchTimer: null, createTimer: null,
     lastCreate: 0, lastGoAt: 0,
     myLastSent: null,        // [x,y] nước tôi vừa gửi (chưa echo)
+    myLastSym: undefined,    // symbol đã gán tạm cho nước vừa gửi
+    bannedCell: null,        // ô bị chối — bỏ qua khi retry
   };
 
   // ======================= UI =======================
@@ -71,7 +74,7 @@
   <div id="gvbot-panel" style="display:none;width:255px;background:rgba(20,25,35,.95);color:#dde;
        border:1px solid #456;border-radius:8px;padding:8px;font-size:12px;box-shadow:0 2px 12px #0008;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-      <b style="color:#8f8">CARO BOT v1.2</b>
+      <b style="color:#8f8">CARO BOT v1.3</b>
       <span id="gvbot-hide" style="cursor:pointer;color:#89a">—to</span>
     </div>
     <div style="margin:4px 0;">
@@ -112,7 +115,7 @@
     ui.toggle.onclick = () => setOn(!S.on);
     st.querySelector('#gvbot-leave').onclick = () => {
       S.atTable = false; S.playing = false; S.readySent = false;
-      S.mySymbol = null; S.myLastSent = null; S.creating = false;
+      S.mySymbol = null; S.mySid = null; S.myLastSent = null; S.creating = false;
       clearInterval(S.readyLoop);
       send(frameLeave(), 'LEAVE (thủ công)');
       log('Đã gửi LEAVE — nếu tạo bàn không được, reload trang');
@@ -128,7 +131,7 @@
     if (v) scheduleCreate(CFG.createIdle);
     else {
       clearTimeout(S.createTimer); clearTimeout(S.turnTimer);
-      clearTimeout(S.rematchTimer); clearTimeout(S.firstTurnTimer);
+      clearTimeout(S.rematchTimer);
       clearInterval(S.readyLoop);
       S.creating = false; S.pendingMove = false;
     }
@@ -196,19 +199,9 @@
     }
   }
   function inBounds(x, y) { return x >= 0 && y >= 0 && x < S.w && y < S.h; }
-  function stoneCounts() {
-    let cx = 0, co = 0;
-    for (const row of S.grid) for (const v of row) { if (v === CROSS) cx++; else if (v === CIRCLE) co++; }
-    return [cx, co];
-  }
-  // Lượt của ai: X luôn đi trước → cân bằng quân = lượt X, X nhiều hơn = lượt O
-  function whoseTurn() {
-    const [cx, co] = stoneCounts();
-    return cx > co ? CIRCLE : CROSS;
-  }
   function myTurnNow() {
-    if (!S.playing || S.mySymbol === null) return false;
-    return whoseTurn() === S.mySymbol;
+    if (!S.playing) return false;
+    return S.mySid === null || S.turnSid === null || S.turnSid === S.mySid;
   }
 
   // ======================= HEURISTIC AI =======================
@@ -243,7 +236,6 @@
     return total;
   }
   function candidates() {
-    if (!S.history.length) return [[Math.floor(S.w / 2), Math.floor(S.h / 2)]];
     const cand = new Set();
     for (const [sx, sy] of S.history) {
       for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) {
@@ -251,29 +243,43 @@
         if (inBounds(x, y) && S.grid[y][x] === EMPTY) cand.add(x + ',' + y);
       }
     }
-    return [...cand].map(s => s.split(',').map(Number));
+    if (!cand.size) {
+      const cx = Math.floor(S.w / 2), cy = Math.floor(S.h / 2);
+      for (let r = 0; r <= 3 && !cand.size; r++)
+        for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+          const x = cx + dx, y = cy + dy;
+          if (inBounds(x, y) && S.grid[y][x] === EMPTY) cand.add(x + ',' + y);
+        }
+    }
+    const list = [...cand].map(s => s.split(',').map(Number));
+    if (S.bannedCell && list.length > 1) {
+      const filtered = list.filter(([x, y]) => x !== S.bannedCell[0] || y !== S.bannedCell[1]);
+      if (filtered.length) return filtered;
+    }
+    return list;
   }
   function bestMove() {
     const cands = candidates();
-    if (!cands.length) return [Math.floor(S.w / 2), Math.floor(S.h / 2)];
+    if (!cands.length) return null;
+    const sym = S.mySymbol === null ? CIRCLE : S.mySymbol;
+    const opp = sym === CIRCLE ? CROSS : CIRCLE;
     for (const [x, y] of cands) for (const [dx, dy] of DIRS) {
-      const [cnt] = lineInfo(x, y, dx, dy, S.mySymbol);
+      const [cnt] = lineInfo(x, y, dx, dy, sym);
       if (cnt >= 5) return [x, y];
     }
     const blocks = [];
     for (const [x, y] of cands) for (const [dx, dy] of DIRS) {
-      const [cnt] = lineInfo(x, y, dx, dy, S.mySymbol === CIRCLE ? CROSS : CIRCLE);
+      const [cnt] = lineInfo(x, y, dx, dy, opp);
       if (cnt >= 5) { blocks.push([x, y]); break; }
     }
     if (blocks.length) {
       let best = blocks[0], bs = -1;
-      for (const [x, y] of blocks) { const s = cellScore(x, y, S.mySymbol); if (s > bs) { bs = s; best = [x, y]; } }
+      for (const [x, y] of blocks) { const s = cellScore(x, y, sym); if (s > bs) { bs = s; best = [x, y]; } }
       return best;
     }
-    const opp = S.mySymbol === CIRCLE ? CROSS : CIRCLE;
     let best = null, bestScore = -1;
     for (const [x, y] of cands) {
-      const atk = cellScore(x, y, S.mySymbol), dfn = cellScore(x, y, opp);
+      const atk = cellScore(x, y, sym), dfn = cellScore(x, y, opp);
       let score = atk + dfn * 0.9;
       if (atk >= 1e6) score += 5e6;
       score -= (Math.abs(x - S.w / 2) + Math.abs(y - S.h / 2)) * 0.5;
@@ -297,28 +303,34 @@
 
   function doMove() {
     S.pendingMove = false;
-    if (!S.on || !S.playing || S.mySymbol === null || S.blockUntilMove) return;
-    if (!myTurnNow()) return;
+    if (!S.on || !S.playing || S.blockUntilMove || !myTurnNow()) return;
     try {
-      const [x, y] = bestMove();
+      const mv = bestMove();
+      if (!mv) return;
+      const [x, y] = mv;
       if (x === undefined || S.grid[y][x] !== EMPTY) return;
       const pos = y * S.w + x;
-      S.grid[y][x] = S.mySymbol;
-      S.history.push([x, y, S.mySymbol]);
+      const sym = S.mySymbol === null ? CIRCLE : S.mySymbol;
+      S.grid[y][x] = sym;
+      S.history.push([x, y, sym]);
       S.myLastSent = [x, y];
-      send(framePlay(pos), `PLAY (${x},${y}) ${S.mySymbol === CIRCLE ? 'O' : 'X'}`);
+      S.myLastSym = sym;
+      S.probeSid = S.turnSid;
+      send(framePlay(pos), `PLAY (${x},${y}) ${symName(sym)}`);
     } catch (e) { log('✗ doMove: ' + e.message); }
   }
 
   function undoMyLastSent() {
     if (!S.myLastSent) return;
     const [x, y] = S.myLastSent;
-    if (inBounds(x, y) && S.grid[y][x] === S.mySymbol) {
+    const sym = S.myLastSym === undefined ? S.mySymbol : S.myLastSym;
+    if (inBounds(x, y) && S.grid[y][x] === sym) {
       S.grid[y][x] = EMPTY;
       const i = S.history.findIndex(h => h[0] === x && h[1] === y);
       if (i >= 0) S.history.splice(i, 1);
     }
     S.myLastSent = null;
+    S.myLastSym = undefined;
     S.blockUntilMove = false;
   }
 
@@ -386,19 +398,8 @@
             send(frameReady(), 'SET_READY');
           }
         } else if (S.playing) {
-          if (S.mySymbol === null && !S.probeDone && !S.pendingMove) {
-            // lượt đầu ván — chờ nước đối thủ; nếu 3s không ai đi → thử đi X
-            clearTimeout(S.firstTurnTimer);
-            S.firstTurnTimer = setTimeout(() => {
-              if (S.mySymbol !== null || S.probeDone || !S.playing) return;
-              S.probeDone = true;
-              S.mySymbol = CROSS;
-              log('3s không ai đi → thử đi trước với X...');
-              scheduleMove(200);
-            }, CFG.firstTurnWait);
-          } else if (S.mySymbol !== null && !S.blockUntilMove) {
-            if (!S.pendingMove && whoseTurn() === S.mySymbol) scheduleMove(300 + Math.random() * 500);
-          }
+          S.turnSid = sid;
+          if (!S.pendingMove && !S.blockUntilMove && myTurnNow()) scheduleMove(300 + Math.random() * 500);
         }
         break;
       }
@@ -411,11 +412,12 @@
           br.i16();
           loadRLE(br.rb());
           S.playing = true; S.readySent = false; S.pendingMove = false;
-          S.myLastSent = null;
-          S.mySymbol = null; S.probeDone = false; S.blockUntilMove = false; S.myAcceptedSym = null;
+          S.myLastSent = null; S.myLastSym = undefined; S.bannedCell = null;
+          S.mySymbol = null; S.mySid = null; S.turnSid = null; S.probeSid = null;
+          S.blockUntilMove = false;
           S.balanceAtGo = S.balance;
           clearTimeout(S.rematchTimer);
-          log('▶ START ' + w + 'x' + h + ' — chờ xác định O/X...');
+          log('▶ START ' + w + 'x' + h + ' — chờ xác định chỗ ngồi/symbol...');
           status('Ván bắt đầu');
         } catch (e) { log('✗ START parse: ' + e.message); }
         break;
@@ -426,14 +428,17 @@
         const y = Math.floor(pos / S.w), x = pos % S.w;
         if (!inBounds(x, y)) break;
         const isMyEcho = S.myLastSent && S.myLastSent[0] === x && S.myLastSent[1] === y;
-        if (S.playing && S.mySymbol === null) {
-          S.probeDone = true;
-          if (isMyEcho) { S.mySymbol = sym; log('Nước tôi được nhận → tôi là ' + (sym === CIRCLE ? 'O' : 'X')); }
-          else { S.mySymbol = sym === CIRCLE ? CROSS : CIRCLE; log('Đối thủ đi trước → tôi là ' + (S.mySymbol === CIRCLE ? 'O' : 'X')); }
-        }
         if (S.grid[y][x] === EMPTY) { S.grid[y][x] = sym; S.history.push([x, y, sym]); }
         else if (S.grid[y][x] !== sym) { S.grid[y][x] = sym; }
-        if (isMyEcho) { S.myLastSent = null; S.myAcceptedSym = sym; }
+        if (isMyEcho) {
+          const oldSym = S.mySymbol;
+          S.mySymbol = sym;
+          if (S.mySid === null && S.probeSid !== null) {
+            S.mySid = S.probeSid;
+            log('✓ Tôi là sid=' + S.mySid + ', quân ' + symName(sym));
+          } else if (oldSym !== null && oldSym !== sym) log('✓ Symbol ván này: ' + symName(sym));
+          S.myLastSent = null; S.myLastSym = undefined; S.bannedCell = null;
+        }
         S.blockUntilMove = false;
         break;
       }
@@ -441,27 +446,45 @@
         if (br.rem() >= 1) {
           const st = br.i8();
           if (st !== 0) {
-            log('✗ Nước bị từ chối (' + st + ')');
+            log('✗ Nước bị từ chối (' + st + ') — thử chỗ khác');
+            S.bannedCell = S.myLastSent ? S.myLastSent.slice() : null;
             undoMyLastSent();
             S.pendingMove = false;
-            S.blockUntilMove = true;
-            if (S.mySymbol === CROSS && S.myAcceptedSym === null) {
-              // chưa có nước X nào của tôi được chấp nhận → tôi là O
-              S.mySymbol = CIRCLE;
-              log('X bị chối → tôi là O, chờ đối thủ đi X');
-            }
+            S.blockUntilMove = false;
+            scheduleMove(CFG.retryDelay);
           }
         }
         break;
       }
       case CMD.GAMEOVER: {
         S.playing = false; S.pendingMove = false; S.myLastSent = null;
-        clearTimeout(S.firstTurnTimer); clearTimeout(S.turnTimer);
+        clearTimeout(S.turnTimer);
+        const entries = [];
+        try {
+          const cnt = br.u8();
+          for (let i = 0; i < cnt; i++) {
+            const sid = br.i8(), res = br.i8(), amt = br.i64();
+            entries.push({ sid, res, amt });
+          }
+        } catch (e) { log('✗ GAMEOVER parse: ' + e.message); }
+        let msg = '';
+        try { if (br.rem() >= 2) msg = br.ru(); } catch (e) {}
         const delta = S.balanceAtGo !== null ? S.balance - S.balanceAtGo : null;
         S.balanceAtGo = null;
-        if (delta !== null && delta > 0) { S.wld[0]++; log('✓✓ THẮNG ' + (delta > 0 ? '+' : '') + delta.toLocaleString('vi-VN') + ' xu'); }
-        else if (delta !== null && delta < 0) { S.wld[1]++; log('✗ THUA ' + delta.toLocaleString('vi-VN') + ' xu'); }
-        else { S.wld[2]++; log('= Hòa / không rõ (' + delta + ')'); }
+
+        let mine = entries.find(e => S.mySid !== null && e.sid === S.mySid);
+        if (!mine && entries.length) {
+          if (/thua/i.test(msg)) mine = entries.find(e => e.amt < 0) || entries.find(e => [2, 4, 12].includes(e.res));
+          else if (/thắng|thang/i.test(msg)) mine = entries.find(e => e.amt > 0) || entries.find(e => [1, 11].includes(e.res));
+          if (mine && S.mySid === null) S.mySid = mine.sid;
+        }
+        const amt = mine ? mine.amt : delta;
+        const win = mine ? (amt > 0 || [1, 11].includes(mine.res)) : (delta !== null && delta > 0);
+        const lose = mine ? (amt < 0 || [2, 4, 12].includes(mine.res)) : (delta !== null && delta < 0);
+        if (win) { S.wld[0]++; log('✓✓ THẮNG ' + (amt > 0 ? '+' : '') + Number(amt).toLocaleString('vi-VN') + ' xu'); }
+        else if (lose) { S.wld[1]++; log('✗ THUA ' + Number(amt).toLocaleString('vi-VN') + ' xu'); }
+        else { S.wld[2]++; log('= Hòa / không rõ (sid=' + S.mySid + ', amt=' + amt + ')'); }
+        if (msg) log('  ' + msg);
         stats();
         S.lastGoAt = Date.now();
         status('Hết ván — mời ván mới...');
@@ -476,7 +499,11 @@
         break;
       }
       case CMD.BALANCE_CHANGED: {
-        if (br.rem() >= 9) { br.i8(); S.balance = br.i64(); stats(); }
+        // flag=-1/0: balance của mình; flag=1: của đối thủ → bỏ qua
+        if (br.rem() >= 9) {
+          const flag = br.i8(), val = br.i64();
+          if (flag === -1 || flag === 0) { S.balance = val; stats(); }
+        }
         break;
       }
       case CMD.LIST_BET_AMT: {
@@ -493,7 +520,7 @@
       case CMD.PLAYER_EXITED: {
         // ở lại bàn — SET_READY chờ người mới (LEAVE làm hỏng place-state WS)
         if (S.atTable && S.on) {
-          S.playing = false; S.mySymbol = null; S.myLastSent = null;
+          S.playing = false; S.mySymbol = null; S.mySid = null; S.myLastSent = null; S.bannedCell = null;
           log('Đối thủ rời — chờ người mới...');
           status('Chờ đối thủ mới...');
           setTimeout(() => {
@@ -552,7 +579,7 @@
   // ======================= KHỞI ĐỘNG =======================
   function boot() {
     buildUI();
-    log('Userscript v1.2 — vào game Cờ Caro rồi bấm BẬT');
+    log('Userscript v1.3 — vào game Cờ Caro rồi bấm BẬT');
     setInterval(() => {
       if (S.on && !S.atTable && !S.creating && Date.now() - S.lastCreate > CFG.createIdle) tryCreate();
     }, 2000);
