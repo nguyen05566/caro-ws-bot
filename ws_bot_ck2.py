@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 ws_bot_ck2.py — Pure WebSocket bot (NO browser after token capture).
-Cờ Caro — TẠO BÀN 10,000 XU + CHƠI THẬT (bỏ qua claim reward, KHÔNG surrender).
+Cờ Caro — TẠO BÀN 4,000 XU + CHƠI THẬT (bỏ qua claim reward, KHÔNG surrender).
 
 Flow:
   1. Load token từ state/tokens/ck2_token.json (ws_url + frames).
      Nếu chưa có token, tự động chạy capture_token.py từ ck2.txt (cookie)
      để sinh token trước khi chạy bot.
   2. WS connect → LOGIN (replay frames) → ENTER_PLACE Lobby.caro.0.
-  3. LIST_BET_AMT → resolve mức cược 10,000 xu → CREATE_RULE (tạo bàn 10000xu).
+  3. LIST_BET_AMT → resolve mức cược 4,000 xu → CREATE_RULE (tạo bàn 4000xu).
   4. SET_READY → chờ START_MATCH → CHƠI bằng EMBRYO ENGINE (TURN/BEGIN mode).
   5. GAMEOVER → KHÔNG tạo bàn mới — Ở LẠI BÀN, SET_READY mời ván tiếp theo.
   6. Chỉ rời bàn khi: bị kick, đối thủ bỏ đi, hoặc hết runtime.
@@ -18,7 +18,7 @@ Engine: embryo-engine/pbrain-embryo (dự phòng: AI heuristic built-in).
 
 Usage:
   python3 ws_bot_ck2.py --cookie-file ck2.txt --token-file state/tokens/ck2_token.json
-  python3 ws_bot_ck2.py --bet-xu 10000 --runtime 21600
+  python3 ws_bot_ck2.py --bet-xu 4000 --runtime 21600
   (nếu token chưa có, bot sẽ tự chạy capture_token.py để sinh từ cookie)
 """
 import argparse
@@ -628,7 +628,7 @@ class WSBot:
         lower = [v for v in BET_LADDER_GUESS if 0 < v <= bet_xu]
         return BET_LADDER_GUESS.index(max(lower)) if lower else 0
 
-    async def create_table(self, bet_xu=10000, bet_id_override=-1):
+    async def create_table(self, bet_xu=4000, bet_id_override=-1):
         if bet_id_override is not None and bet_id_override > 0:
             bet_id = bet_id_override
             log(f"[CREATE] tạo bàn (bet_id={bet_id} — override)")
@@ -994,13 +994,13 @@ def ensure_token_from_cookie(cookie_file, token_file):
 
 # ======================== MAIN ========================
 async def main():
-    parser = argparse.ArgumentParser(description="Pure WS bot — tạo bàn 10000xu + CHƠI (no claim, no surrender)")
+    parser = argparse.ArgumentParser(description="Pure WS bot — tạo bàn 4000xu + CHƠI (no claim, no surrender)")
     parser.add_argument("--token-file", default=DEFAULT_TOKEN_FILE,
                         help=f"Path to token JSON file (default: {DEFAULT_TOKEN_FILE})")
     parser.add_argument("--cookie-file", default=DEFAULT_COOKIE_FILE,
                         help=f"Path to cookie file used to auto-capture token if missing (default: {DEFAULT_COOKIE_FILE})")
-    parser.add_argument("--bet-xu", type=int, default=int(os.environ.get("BET_XU", "10000")),
-                        help="Mức cược bàn tự tạo (mặc định 10000 xu)")
+    parser.add_argument("--bet-xu", type=int, default=int(os.environ.get("BET_XU", "4000")),
+                        help="Mức cược bàn tự tạo (mặc định 4000 xu)")
     parser.add_argument("--bet-id", type=int, default=int(os.environ.get("BET_ID", "-1")),
                         help="Override raw bet_amt_id (>0 để dùng, bỏ qua --bet-xu)")
     parser.add_argument("--runtime", type=int, default=int(os.environ.get("RUNTIME_SECONDS", "21600")))
@@ -1057,7 +1057,7 @@ async def main():
                         stop = True
                         break
 
-                    # Phase 1: TẠO BÀN (mặc định 10000xu) — hoặc REJOIN bàn cũ còn tồn
+                    # Phase 1: TẠO BÀN (mặc định 4000xu) — hoặc REJOIN bàn cũ còn tồn
                     log(f"\n[Phase 1] Kiểm tra bàn cũ / tạo bàn {args.bet_xu:,}xu...")
                     if await bot.sync_table():
                         log(f"  [REJOIN] Còn trong bàn cũ — chơi tiếp, không tạo mới")
