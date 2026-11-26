@@ -5,7 +5,7 @@ Không cần browser sau khi capture token — 100% WebSocket.
 
 ## Tính năng
 
-- **Tạo bàn 1000 xu** tự động (`LIST_BET_AMT` → resolve bet_id → `CREATE_RULE`)
+- **Tạo bàn 10,000 xu** tự động (`LIST_BET_AMT` → resolve bet_id → `CREATE_RULE`)
 - **Chơi thật** bằng **Embryo engine** (`BEGIN`/`TURN` mode, ~2s/nước)
   - Dự phòng: AI heuristic built-in nếu engine thiếu/lỗi/desync
 - **Rematch tại chỗ**: GAMEOVER → ở lại bàn, `SET_READY` mời ván tiếp — **không tạo bàn mới**
@@ -36,7 +36,7 @@ python3 ws_bot_ck2.py
 python3 ws_bot_ck2.py \
   --cookie-file ck2.txt \
   --token-file state/tokens/ck2_token.json \
-  --bet-xu 1000 \
+  --bet-xu 10000 \
   --runtime 21600 \
   --max-games 0        # 0 = không giới hạn số ván
 ```
@@ -46,7 +46,7 @@ python3 ws_bot_ck2.py \
 ```
 cookie → capture_token.py (Playwright) → ws_url + login frames (hex)
        → WS connect → LOGIN replay → ENTER_PLACE Lobby.caro.0
-       → LIST_BET_AMT → CREATE_RULE (1000xu) → GET_TABLE_DATA_EX (slot/balance)
+       → LIST_BET_AMT → CREATE_RULE (10000xu) → GET_TABLE_DATA_EX (slot/balance)
        → SET_READY → START_MATCH → PLAY mỗi lượt (Embryo engine)
        → GAMEOVER → STAY → SET_READY → ván tiếp...
 ```
@@ -57,7 +57,7 @@ cookie → capture_token.py (Playwright) → ws_url + login frames (hex)
 |-----|----|---------|
 | LOGIN | 302 | replay frames từ capture |
 | ENTER_PLACE | 401 | vào lobby/bàn |
-| LIST_BET_AMT | 413 | bảng mức cược (1000 → id 5) |
+| LIST_BET_AMT | 413 | bảng mức cược (10,000 → id 8) |
 | CREATE_RULE | 405 | tạo bàn |
 | SET_READY | 434 | sẵn sàng |
 | START_MATCH | 417 | bắt đầu ván (board RLE 15x19) |
