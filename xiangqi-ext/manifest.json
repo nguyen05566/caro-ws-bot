@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "gamevh Xiangqi Bot (Pikafish WASM)",
+  "version": "1.0.0",
+  "description": "Auto xiangqi 100xu trên gamevh.net với Pikafish WASM",
+  "permissions": ["declarativeNetRequest"],
+  "host_permissions": ["https://gamevh.net/*", "https://*.gamevh.net/*", "wss://gamevh.me/*"],
+  "background": { "service_worker": "bg.js" },
+  "content_scripts": [{
+    "matches": ["https://gamevh.net/*"],
+    "js": ["content.js"],
+    "run_at": "document_start",
+    "all_frames": false
+  }],
+  "declarative_net_request": {
+    "rule_resources": [{ "id": "coi", "enabled": true, "path": "rules.json" }]
+  },
+  "web_accessible_resources": [{
+    "resources": ["page.js", "engine/*"],
+    "matches": ["https://gamevh.net/*"]
+  }],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
+}
