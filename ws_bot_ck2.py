@@ -245,7 +245,11 @@ def best_move(board, me, opp):
 
 # ======================== EMBRYO ENGINE (từ arena) ========================
 ENGINE_DIR = Path(__file__).resolve().parent / "embryo-engine"
-EMBRYO_BINARY = "pbrain-embryo"
+_mach = os.uname().machine  # x86_64 / aarch64
+EMBRYO_BINARY = next(
+    (n for n in (f"pbrain-embryo.{_mach}", "pbrain-embryo")
+     if (ENGINE_DIR / n).exists()),
+    "pbrain-embryo")
 EMBRYO_TIMEOUT_TURN_MS = 2000
 EMBRYO_MATCH_TIMEOUT_MS = 1800000
 BOARD_W, BOARD_H = 15, 19

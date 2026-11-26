@@ -22,7 +22,9 @@ pip install websockets playwright
 python3 -m playwright install chromium
 ```
 
-Engine (tuỳ chọn nhưng nên có): `embryo-engine/pbrain-embryo` (aarch64 native).
+Engine (tuỳ chọn nhưng nên có): `embryo-engine/pbrain-embryo` (aarch64) hoặc
+`embryo-engine/pbrain-embryo.x86_64` (static, cho GitHub Actions runner x86_64).
+Bot tự chọn binary theo kiến trúc máy (`pbrain-embryo.<uname -m>` ưu tiên trước).
 Không có engine → bot tự dùng AI heuristic.
 
 ## Sử dụng
