@@ -69,6 +69,17 @@ cookie → capture_token.py (Playwright) → ws_url + login frames (hex)
 | GAMEOVER | 418 | kết quả (1/11 thắng, 2/4/12 thua) |
 | BALANCE_CHANGED | 431 | [i8 flag][i64 balance]... (flag ∈ {-1,0} = của mình) |
 
+## Engine alpha-beta WASM (userscript gamevh.net)
+
+`gamvh.user.js` v1.4 nhúng sẵn engine gomoku alpha-beta (`engine/gomoku.c`, 28KB WASM)
+→ chạy offline trên Tampermonkey điện thoại; heuristic JS chỉ là fallback.
+
+```bash
+pip install ziglang
+cd engine && PY=python3 ./build.sh   # tạo gomoku.wasm + nhúng base64 vào userscript
+node test.js                          # test chiến thuật (chặn 4, chốt 4, ô trống)
+```
+
 ## Lưu ý
 
 - Token hết hạn → xoá `state/tokens/*_token.json`, bot tự capture lại từ cookie.

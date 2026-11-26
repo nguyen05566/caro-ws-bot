@@ -9,3 +9,8 @@ embryo-engine/log/
 embryo-engine/*.core
 *.core
 nohup.out
+
+# build artifact — đóng gói lại bằng chrome --pack-extension
+xiangqi-ext.crx
+# Chrome sinh tự động
+xiangqi-ext/_metadata/
