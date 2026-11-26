@@ -1,0 +1,57 @@
+name: Caro WS Bot
+
+on:
+  workflow_dispatch:
+    inputs:
+      bet_xu:
+        description: 'Mức cược bàn tự tạo (xu)'
+        required: false
+        default: '4000'
+      runtime:
+        description: 'Runtime giây (max ~20000 để vừa job 350m)'
+        required: false
+        default: '20000'
+      max_games:
+        description: 'Dừng sau N ván (0 = không giới hạn)'
+        required: false
+        default: '0'
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install websockets playwright
+        python3 -m playwright install chromium --with-deps
+
+    - name: Write cookie from secret
+      run: printf '%s' "${{ secrets.FB_COOKIE }}" > ck2.txt
+
+    - name: Run bot
+      run: |
+        python3 -u ws_bot_ck2.py \
+          --cookie-file ck2.txt \
+          --token-file state/tokens/ck2_token.json \
+          --bet-xu ${{ inputs.bet_xu }} \
+          --runtime ${{ inputs.runtime }} \
+          --max-games ${{ inputs.max_games }}
+
+    - name: Upload state (tokens, logs)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: bot-state
+        path: |
+          state/
+        retention-days: 7
+        if-no-files-found: ignore
